@@ -1,0 +1,975 @@
+---
+title: "NFL Tendency App Code"
+author: "Darren Kagey"
+date: "2024-09-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(nflverse)
+library(tidyverse)
+```
+
+```{r}
+# participation data
+raw_participation <- load_participation(seasons = 2022:2024, include_pbp = TRUE) %>% 
+  filter(penalty == 0 & play_type != "no_play" & (pass == 1| rush== 1) & str_detect(desc, "Punt formation") == FALSE & str_detect(desc, "Field Goal formation") == FALSE & two_point_attempt == 0) %>% 
+  select(-offense_names, -defense_names, - offense_numbers, - defense_numbers, -offense_positions, -defense_positions)
+
+# selected only variables that may be useful
+selected_participation <- raw_participation[c(1:2,4:8,10:13,16, 18:19,23,25,27,29,38:39,41,43,46:47,53,77,91,110,111,190,196,303,305,358,389)] %>% 
+  filter(wp >= 0.05 & wp <= .95 & def_wp >= 0.05 & def_wp <= .95) %>% # remove garbage time
+  filter(n_offense == 11 & n_defense == 11) # remove plays where both sides do not have 11 players
+
+# ftn data
+ftn_data <- load_ftn_charting(seasons = 2022:2024) %>% 
+  select(nflverse_game_id, season, week, nflverse_play_id, is_motion, is_play_action)
+
+# merge ftn data with selected participation
+selected_participation_ftn <- selected_participation %>% 
+  left_join(ftn_data, c("nflverse_game_id", "play_id"="nflverse_play_id", "season"))
+
+
+
+# mutate variables as necessary
+clean_participation <- selected_participation_ftn %>% 
+  mutate(down = case_when(
+    down == 1 ~ "1st Down",
+    down == 2 & ydstogo == 1 ~ "2nd & 1",
+    down == 2 & ydstogo %in% c(2:3) ~ "2nd & 2-3",
+    down == 2 & ydstogo %in% c(4:6) ~ "2nd & 4-6",
+    down == 2 & ydstogo %in% c(7:9) ~ "2nd & 7-9",
+    down == 2 & ydstogo >= 10 ~ "2nd & 10+",
+    down == 3 & ydstogo == 1 ~ "3rd & 1",
+    down == 3 & ydstogo %in% c(2:3) ~ "3rd & 2-3",
+    down == 3 & ydstogo %in% c(4:6) ~ "3rd & 4-6",
+    down == 3 & ydstogo %in% c(7:9) ~ "3rd & 7-9",
+    down == 3 & ydstogo >= 10 ~ "3rd & 10+",
+    down == 4 ~ "4th Down"
+  ),
+  down = factor(down, levels=c("1st Down", "2nd & 1", "2nd & 2-3", "2nd & 4-6", "2nd & 7-9", "2nd & 10+", "3rd & 1", "3rd & 2-3", "3rd & 4-6", "3rd & 7-9", "3rd & 10+", "4th Down")),
+  fpos = case_when(
+    yardline_100 %in% c(99:90) ~ "-1 to -10",
+    yardline_100 %in% c(89:80) ~ "-11 to -20",
+    yardline_100 %in% c(79:51) ~ "-21 to -49",
+    yardline_100 %in% c(50:36) ~ "50 to +36",
+    yardline_100 %in% c(35:26) ~ "+35 to +26",
+    yardline_100 %in% c(25:16) ~ "+25 to +16",
+    yardline_100 %in% c(15:6) ~ "+15 to +6",
+    yardline_100 %in% c(5:1) ~ "+5 to +1"
+  ),
+    offense_formation = str_replace_all(offense_formation, "_", " "),
+    offense_personnel = case_when(
+    str_detect(offense_personnel, "0 RB, 0 TE") == TRUE | (str_detect(offense_personnel, "0 RB") == TRUE & str_detect(offense_personnel, "0 TE") == TRUE) ~ "00",
+    str_detect(offense_personnel, "0 RB, 1 TE") == TRUE | (str_detect(offense_personnel, "0 RB") == TRUE & str_detect(offense_personnel, "1 TE") == TRUE) ~ "01",
+    str_detect(offense_personnel, "0 RB, 2 TE") == TRUE | (str_detect(offense_personnel, "0 RB") == TRUE & str_detect(offense_personnel, "2 TE") == TRUE) ~ "02",
+    str_detect(offense_personnel, "0 RB, 3 TE") == TRUE | (str_detect(offense_personnel, "0 RB") == TRUE & str_detect(offense_personnel, "3 TE") == TRUE) ~ "03",
+    str_detect(offense_personnel, "1 RB, 0 TE") == TRUE | (str_detect(offense_personnel, "1 RB") == TRUE & str_detect(offense_personnel, "0 TE") == TRUE) ~ "10",
+    str_detect(offense_personnel, "1 RB, 1 TE") == TRUE | (str_detect(offense_personnel, "1 RB") == TRUE & str_detect(offense_personnel, "1 TE") == TRUE) ~ "11",
+    str_detect(offense_personnel, "1 RB, 2 TE") == TRUE | (str_detect(offense_personnel, "1 RB") == TRUE & str_detect(offense_personnel, "2 TE") == TRUE) ~ "12",
+    str_detect(offense_personnel, "1 RB, 3 TE") == TRUE | (str_detect(offense_personnel, "1 RB") == TRUE & str_detect(offense_personnel, "3 TE") == TRUE) ~ "13",
+    str_detect(offense_personnel, "1 RB, 4 TE") == TRUE | (str_detect(offense_personnel, "1 RB") == TRUE & str_detect(offense_personnel, "4 TE") == TRUE) ~ "14",
+    str_detect(offense_personnel, "2 RB, 0 TE") == TRUE | (str_detect(offense_personnel, "2 RB") == TRUE & str_detect(offense_personnel, "0 TE") == TRUE) ~ "20",
+    str_detect(offense_personnel, "2 RB, 1 TE") == TRUE | (str_detect(offense_personnel, "2 RB") == TRUE & str_detect(offense_personnel, "1 TE") == TRUE) ~ "21",
+    str_detect(offense_personnel, "2 RB, 2 TE") == TRUE | (str_detect(offense_personnel, "2 RB") == TRUE & str_detect(offense_personnel, "2 TE") == TRUE) ~ "22",
+    str_detect(offense_personnel, "2 RB, 3 TE") == TRUE | (str_detect(offense_personnel, "2 RB") == TRUE & str_detect(offense_personnel, "3 TE") == TRUE) ~ "23",
+    str_detect(offense_personnel, "3 RB, 0 TE") == TRUE | (str_detect(offense_personnel, "3 RB") == TRUE & str_detect(offense_personnel, "0 TE") == TRUE) ~ "30",
+    str_detect(offense_personnel, "3 RB, 1 TE") == TRUE | (str_detect(offense_personnel, "3 RB") == TRUE & str_detect(offense_personnel, "1 TE") == TRUE) ~ "31",
+    str_detect(offense_personnel, "3 RB, 2 TE") == TRUE | (str_detect(offense_personnel, "3 RB") == TRUE & str_detect(offense_personnel, "2 TE") == TRUE) ~ "32",
+    str_detect(offense_personnel, "4 RB, 0 TE") == TRUE | (str_detect(offense_personnel, "4 RB") == TRUE & str_detect(offense_personnel, "0 TE") == TRUE) ~ "40",
+    str_detect(offense_personnel, "4 RB, 1 TE") == TRUE | (str_detect(offense_personnel, "4 RB") == TRUE & str_detect(offense_personnel, "1 TE") == TRUE) ~ "41",
+    TRUE ~ NA
+  ),
+  DL_location = str_locate(defense_personnel, "DL")[,1],
+  LB_location = str_locate(defense_personnel, " LB")[,1],
+  DB_location = str_locate(defense_personnel, "DB")[,1],
+  CB_location = str_locate(defense_personnel, "CB")[,1],
+  DT_location = str_locate(defense_personnel, "DT")[,1],
+  DE_location = str_locate(defense_personnel, "DE")[,1],
+  NT_location = str_locate(defense_personnel, "NT")[,1],
+  ILB_location = str_locate(defense_personnel, "ILB")[,1],
+  OLB_location = str_locate(defense_personnel, "OLB")[,1],
+  SS_location = str_locate(defense_personnel, "SS")[,1],
+  FS_location = str_locate(defense_personnel, "FS")[,1],
+  DL_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, DL_location -2, DL_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, DL_location -2, DL_location-1))),
+  LB_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, LB_location -1, LB_location))) == TRUE, 0, as.numeric(str_sub(defense_personnel, LB_location -1, LB_location))),
+  DB_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, DB_location -2, DB_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, DB_location -2, DB_location-1))),
+  CB_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, CB_location -2, CB_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, CB_location -2, CB_location-1))),
+  DT_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, DT_location -2, DT_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, DT_location -2, DT_location-1))),
+  DE_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, DE_location -2, DE_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, DE_location -2, DE_location-1))),
+  NT_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, NT_location -2, NT_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, NT_location -2, NT_location-1))),
+  ILB_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, ILB_location -2, ILB_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, ILB_location -2, ILB_location-1))),
+  OLB_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, OLB_location -2, OLB_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, OLB_location -2, OLB_location-1))),
+  SS_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, SS_location -2, SS_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, SS_location -2, SS_location-1))),
+  FS_count = ifelse(is.na(as.numeric(str_sub(defense_personnel, FS_location -2, FS_location-1))) == TRUE, 0, as.numeric(str_sub(defense_personnel, FS_location -2, FS_location-1))),
+  DL_total = case_when(
+    DL_count > 0 & LB_count > 0 & DB_count > 0 ~ DL_count,
+    DT_count > 0 | DE_count > 0 | NT_count > 0 | ILB_count > 0 | OLB_count > 0 | CB_count > 0 | SS_count > 0 | FS_count > 0 ~ DT_count + NT_count + DE_count
+  ),
+  LB_total = case_when(
+    DL_count > 0 & LB_count > 0 & DB_count > 0 ~ LB_count,
+    DT_count > 0 | DE_count > 0 | NT_count > 0 | ILB_count > 0 | OLB_count > 0 | CB_count > 0 | SS_count > 0 | FS_count > 0 ~ DT_count + ILB_count + OLB_count
+  ),
+  DB_total = case_when(
+    DL_count > 0 & LB_count > 0 & DB_count > 0 ~ DB_count,
+    DT_count > 0 | DE_count > 0 | NT_count > 0 | ILB_count > 0 | OLB_count > 0 | CB_count > 0 | SS_count > 0 | FS_count > 0 ~ CB_count + SS_count + FS_count + DB_count
+  ),
+  defense_personnel = case_when(
+    DB_total > 6 ~ "7+ DBs",
+    DB_total == 6 ~ "Dime",
+    DB_total == 5 ~ "Nickel",
+    DB_total == 4 ~ "Base",
+    DB_total < 4 ~ "0-3 DBs"
+  ),
+  defense_man_zone_type = str_replace_all(defense_man_zone_type, "_COVERAGE", " "),
+  defense_coverage_type = str_replace_all(defense_coverage_type, "_", " "),
+  play_type = case_when(
+    qb_scramble == 1 ~ "scramble",
+    play_type == "pass" ~ "pass",
+    play_type == "run" & qb_scramble == 0 ~ "run"),
+  play_design = case_when(
+    qb_scramble == 1 | play_type == "pass" ~ "dropback",
+    qb_scramble == 0 & play_type == "run" ~ "rush"),
+  number_of_pass_rushers = case_when(
+    play_design == "rush" ~ NA,
+    TRUE ~ number_of_pass_rushers
+  ),
+  def_epa = epa,
+  motion = case_when(
+    is_motion == TRUE ~ 1,
+    is_motion == FALSE ~ 0
+  ),
+  play_action = case_when(
+    is_play_action == TRUE ~ 1,
+    is_play_action == FALSE ~ 0
+  )) %>% 
+  select(nflverse_game_id, play_id, posteam, defteam, season_type, qtr, time, down, play_design, play_type, offense_formation, offense_personnel, defense_personnel, defenders_in_box, number_of_pass_rushers, defense_coverage_type, yards_gained, off_epa=epa, def_epa, success, motion, play_action, offense_players, defense_players, season) 
+
+#################################################################################################
+
+## get players on each play
+offensive_players <- data.frame(nflverse_game_id = selected_participation$nflverse_game_id, play_id = selected_participation$play_id, players = selected_participation$offense_players)
+
+defensive_players <- data.frame(nflverse_game_id = selected_participation$nflverse_game_id, play_id = selected_participation$play_id, players = selected_participation$defense_players)
+
+# split player ids into per column
+offensive_players_split <- offensive_players %>% 
+  separate_wider_delim(players, delim =";",  names= c("Off Player 1", "Off Player 2","Off Player 3", "Off Player 4","Off Player 5","Off Player 6","Off Player 7","Off Player 8","Off Player 9","Off Player 10","Off Player 11")) 
+
+defensive_players_split <- defensive_players %>% 
+  separate_wider_delim(players, delim =";", names= c("Def Player 1", "Def Player 2","Def Player 3", "Def Player 4","Def Player 5","Def Player 6","Def Player 7","Def Player 8","Def Player 9","Def Player 10","Def Player 11")) 
+
+# join off and def, pivot long for joining
+players_split <- offensive_players_split %>% 
+  full_join(defensive_players_split, by=c("nflverse_game_id","play_id")) %>% pivot_longer(c(-nflverse_game_id, -play_id), names_to = "player_count", values_to = "gsis_id")
+
+
+## load player names to match ids with
+all_players <- load_players() %>%
+  select(gsis_id, display_name, position)
+
+## join player names to split player ids
+players_on_plays <- players_split %>% 
+  left_join(all_players, by="gsis_id")
+
+# join players names to play personnel data
+player_participation <- players_on_plays %>% left_join(clean_participation, by=c("nflverse_game_id","play_id"))  %>% 
+  mutate(position = case_when (
+    position %in% c("DT","NT") ~ "iDL",
+    position %in% c("OLB", "ILB", "MLB") ~ "LB",
+    position %in% c("FS", "SS") ~ "Saf",
+    TRUE ~ position
+  ),
+  Off.Def = case_when(
+    str_detect(player_count, "Off") == TRUE ~ "Offense",
+    str_detect(player_count, "Def") == TRUE ~ "Defense"
+  ),
+  team = case_when(
+    Off.Def == "Offense" ~ posteam,
+    Off.Def == "Defense" ~ defteam
+  )) %>% 
+  select(-yards_gained, -off_epa, -def_epa, -offense_players, -defense_players,-play_type, -time, -qtr, -down, -play_design,-player_count, -success, -defteam, -posteam)
+
+
+
+#################################################################################################
+
+
+## split by off/def formation/personnel, and season type for tables in app
+# offensive personnel, all season types
+off_personnel_participation_all <- clean_participation %>% 
+  mutate(season_type = case_when(
+    season_type == "REG" | season_type == "POST" ~ "REG+POST" # combine reg and post season types
+  )) %>% 
+  select(nflverse_game_id, play_id, posteam, qtr, time, down,  offense_personnel, play_design, yards=yards_gained, epa=off_epa, success, motion, play_action, season_type, season)
+# offensive personnel, REG season type
+off_personnel_participation_reg <- clean_participation %>% 
+  filter(season_type == "REG") %>% 
+  select(nflverse_game_id, play_id, posteam, qtr, time, down,  offense_personnel, play_design, yards=yards_gained, epa=off_epa, success, motion, play_action, season_type, season)
+# offensive personnel, POST season type
+off_personnel_participation_post <- clean_participation %>% 
+  filter(season_type == "POST") %>% 
+  select(nflverse_game_id, play_id, posteam, qtr, time, down,  offense_personnel, play_design, yards=yards_gained, epa=off_epa, success, motion, play_action, season_type, season)
+# offensive formation, all season types
+off_formation_participation_all <- clean_participation %>% 
+  mutate(season_type = case_when(
+    season_type == "REG" | season_type == "POST" ~ "REG+POST" # combine reg and post season types
+  )) %>% 
+  select(nflverse_game_id, play_id, posteam, qtr, time, down,  offense_formation, play_design, yards=yards_gained, epa=off_epa, success, motion, play_action, season_type, season)
+# offensive formation, REG season type
+off_formation_participation_reg <- clean_participation %>% 
+  filter(season_type == "REG") %>% 
+  select(nflverse_game_id, play_id, posteam, qtr, time, down,  offense_formation, play_design, yards=yards_gained, epa=off_epa, success, motion, play_action, season_type, season)
+# offensive formation, POST season type
+off_formation_participation_post <- clean_participation %>% 
+  filter(season_type == "POST") %>% 
+  select(nflverse_game_id, play_id, posteam, qtr, time, down,  offense_formation, play_design, yards=yards_gained, epa=off_epa, success, motion, play_action, season_type, season)
+# defensive personnel, all season types
+def_personnel_participation_all <- clean_participation %>% 
+  mutate(season_type = case_when(
+    season_type == "REG" | season_type == "POST" ~ "REG+POST" # combine reg and post season types
+  )) %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defense_personnel, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# defensive personnel, REG season types
+def_personnel_participation_reg <- clean_participation %>% 
+  filter(season_type == "REG") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defense_personnel, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# defensive personnel, POST season types
+def_personnel_participation_post <- clean_participation %>% 
+  filter(season_type == "POST") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defense_personnel, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# box defenders, all season types
+box_defenders_participation_all <- clean_participation %>% 
+  mutate(season_type = case_when(
+    season_type == "REG" | season_type == "POST" ~ "REG+POST" # combine reg and post season types
+  )) %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defenders_in_box, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# box defenders, REG season types
+box_defenders_participation_reg <- clean_participation %>% 
+  filter(season_type == "REG") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defenders_in_box, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# box defenders, POST season types
+box_defenders_participation_post <- clean_participation %>% 
+  filter(season_type == "POST") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defenders_in_box, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# number of pass rushers and coverage scheme, all season types (dropbacks only)
+pass_rushers_participation_all <- clean_participation %>% 
+  filter(play_design == "dropback") %>% 
+  mutate(season_type = case_when(
+    season_type == "REG" | season_type == "POST" ~ "REG+POST" # combine reg and post season types
+  )) %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  number_of_pass_rushers, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# number of pass rushers and coverage scheme, REG season types (dropbacks only)
+pass_rushers_participation_reg <- clean_participation %>% 
+  filter(play_design == "dropback" & season_type == "REG") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  number_of_pass_rushers, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# number of pass rushers and coverage scheme, POST season types (dropbacks only)
+pass_rushers_participation_post <- clean_participation %>% 
+  filter(play_design == "dropback" & season_type == "POST") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  number_of_pass_rushers, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+#coverage scheme, all season types (dropbacks only)
+coverage_participation_all <- clean_participation %>% 
+  filter(play_design == "dropback") %>% 
+  mutate(season_type = case_when(
+    season_type == "REG" | season_type == "POST" ~ "REG+POST" # combine reg and post season types
+  )) %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defense_coverage_type, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# coverage scheme, REG season types (dropbacks only)
+coverage_participation_reg <- clean_participation %>% 
+  filter(play_design == "dropback" & season_type == "REG") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defense_coverage_type, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+# coverage scheme, POST season types (dropbacks only)
+coverage_participation_post <- clean_participation %>% 
+  filter(play_design == "dropback" & season_type == "POST") %>% 
+  select(nflverse_game_id, play_id, defteam, qtr, time, down,  defense_coverage_type, play_design, yards=yards_gained, epa=def_epa, success, motion, play_action, season_type, season)
+
+# put the data frames relating to each personnel/formation stat in lists
+off_personnels <- list(all_off_personnel_participation = as.data.frame(off_personnel_participation_all),
+                       reg_off_personnel_participation = as.data.frame(off_personnel_participation_reg),
+                       post_off_personnel_participation = as.data.frame(off_personnel_participation_post))
+
+off_formations <- list(all_off_formation_participation = as.data.frame(off_formation_participation_all),
+                       reg_off_formation_participation = as.data.frame(off_formation_participation_reg),
+                       post_off_formation_participation = as.data.frame(off_formation_participation_post))
+
+def_personnels <- list(all_def_personnel_participation = as.data.frame(def_personnel_participation_all),
+                       reg_def_personnel_participation = as.data.frame(def_personnel_participation_reg),
+                       post_def_personnel_participation = as.data.frame(def_personnel_participation_post))
+
+box_defenders <- list(all_box_defenders_participation = as.data.frame(box_defenders_participation_all),
+                       reg_box_defenders_participation = as.data.frame(box_defenders_participation_reg),
+                       post_box_defenders_participation = as.data.frame(box_defenders_participation_post))
+
+pass_rushers <- list(all_pass_rushers_participation = as.data.frame(pass_rushers_participation_all),
+                       reg_pass_rushers_participation = as.data.frame(pass_rushers_participation_reg),
+                       post_pass_rushers_participation = as.data.frame(pass_rushers_participation_post))
+
+coverages <- list(all_coverage_participation = as.data.frame(coverage_participation_all),
+                       reg_coverage_participation = as.data.frame(coverage_participation_reg),
+                       post_coverage_participation = as.data.frame(coverage_participation_post))
+```
+
+                     
+
+
+
+### make functions for calculating...
+ ## 1) team play counts by off personnel, off formation, def personnel, box defenders, pass rushers, coverage + epa/play, epa/dropback, epa/run, success rate gained and allowed
+ ## 2) run/pass splits for offenses by personnel and formation + epa/play, epa/dropback, epa/run, success rate
+ ## 3) usage by down for off personnel formation, def personnel, box defenders, pass rushers, coverage + epa/play, epa/dropback, epa/run, success rate gained and allowed
+ ## 4) def personnel, box defenders, pass rushers, coverage vs off personnel + epa/play, epa/dropback, epa/run allowed, success rate allowed 
+ ## 5) league rankings for epa/play, epa/pass, epa/run, success rate by off personnel and off formation
+  ## 6) league rankings for epa/play, epa/pass, epa/run, success rate by def personnel, box defenders, pass rushers, coverage
+### calculate play counts for...
+ ## offensive players personnel
+ ## defensive players by personnel
+
+```{r}
+# function 1 - team counts
+team_counts <- function(x){
+  if(length(unique(x$play_design)) == 1){
+    total_pass_counts_PO <- x %>% # PO= pass only, as in only dropbacks in data
+    filter(play_design == "dropback") %>% # pass plays
+      group_by(pick(3,7,14,15)) %>% 
+      summarise(total_pass_count_PO = n(), #pass plays
+                epa_per_pass = round(sum(epa)/total_pass_count_PO,2)) # epa/pass
+      
+  total_counts_PO <- x %>% 
+    group_by(pick(3,7,14,15)) %>%
+    summarise(play_count_PO =n(), # all plays
+              epa_per_play = round(sum(epa)/play_count_PO,2), # epa/play
+              grouped_off_success_rate_PO = round((sum(success)/play_count_PO),2), # success rate
+              motion_perc = round(sum(motion)/play_count_PO,2), # motion rate
+                pa_perc = round(sum(play_action)/play_count_PO,2)) # PA rate
+              
+  
+  PO_counts <- total_counts_PO %>% merge(total_pass_counts_PO, by.x=c(1,2,3,4), by.y=c(1,2,3,4))
+  
+  PO_counts <- PO_counts %>% 
+    filter(!is.na(.[[2]]))
+  
+  PO_counts <- PO_counts[c(1,4,3,2,10,6,11,7,8,9)]
+  
+  print(PO_counts)
+  }
+  else{
+    total_run_counts <- x %>% 
+      filter(play_design == "rush") %>% # run plays
+      group_by(pick(3,7,14,15)) %>% 
+      summarise(total_run_count = n(), #run plays
+                epa_per_run = round(sum(epa)/total_run_count,2)) # epa/run
+    
+    total_pass_counts <- x %>%
+    filter(play_design == "dropback") %>% # pass plays
+      group_by(pick(3,7,14,15)) %>% 
+      summarise(total_pass_count = n(), #pass plays
+                epa_per_pass = round(sum(epa)/total_pass_count,2)) # epa/pass
+      
+  total_counts <- x %>% 
+    group_by(pick(3,7,14,15)) %>%
+    summarise(play_count =n(), #all plays
+              epa_per_play = round(sum(epa)/play_count,2), # epa/play
+              grouped_off_success_rate = round((sum(success)/play_count),2), # success rate
+               motion_perc = round(sum(motion)/play_count,2), # motion rate
+                pa_perc = round(sum(play_action)/play_count,2)) # PA rate
+              
+  
+  counts <- merge(total_counts, merge(total_run_counts, total_pass_counts, by=c(1,2,3,4)), by=c(1,2,3,4))
+
+  counts <- counts[c(1,4,3,2,5,6,11,13,7,8,9)]
+  
+  print(counts)
+  }
+}
+
+# run function 1 on data
+OP_counts <- lapply(off_personnels, team_counts)
+OF_counts <- lapply(off_formations, team_counts)
+DP_counts <- lapply(def_personnels, team_counts)
+Box_counts <- lapply(box_defenders, team_counts)
+PR_counts <- lapply(pass_rushers, team_counts)
+Cov_counts <- lapply(coverages, team_counts)
+```
+
+```{r}
+# function 2 - run/pass splits
+off_playcall_splits <- function(x){
+  grouped_run_splits <- x %>%
+    filter(play_design == "rush") %>% # run plays
+   group_by(pick(3,7,14,15)) %>%
+   summarise(grouped_run_count = n(), # run play count
+          epa_per_run = round(sum(epa)/grouped_run_count, 2)) # epa/run
+          
+  grouped_pass_splits <- x %>% 
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15)) %>%
+   summarise(grouped_pass_count = n(), # pass play counts
+          epa_per_pass = round(sum(epa)/grouped_pass_count, 2)) # epa/pass
+  
+  grouped_plays <- x %>% 
+   group_by(pick(3,7,14,15)) %>%
+   summarise(play_count = n(), # play counts
+          epa_per_play = round(sum(epa)/play_count, 2), # epa/play
+          grouped_off_success_rate = round((sum(success)/play_count),2), # success rate
+           motion_perc = round(sum(motion)/play_count,2), # motion rate
+            pa_perc = round(sum(play_action)/play_count,2)) # PA rate
+              
+  
+  grouped_play_splits1 <- grouped_plays %>% 
+    merge(grouped_run_splits, by.x=c(1,2,3,4), by.y=c(1,2,3,4))
+  grouped_play_splits2 <- grouped_play_splits1 %>% 
+    merge(grouped_pass_splits, by.x=c(1,2,3,4), by.y=c(1,2,3,4)) %>% 
+    mutate(run_perc = round((grouped_run_count/play_count),2), # run%
+           pass_perc = round((grouped_pass_count/play_count),2)) # pass%
+  
+grouped_play_splits2 <- grouped_play_splits2[c(1,4,3,2,5,6,10,11,14,12,13,15,7,8,9)]
+  
+  print(grouped_play_splits2)
+}
+
+# run function 2 on data
+OP_playcalls <- lapply(off_personnels, off_playcall_splits)
+OF_playcalls <- lapply(off_formations, off_playcall_splits)
+
+```
+
+```{r}
+# function 3 - personnel, etc. by down
+usage_by_down <- function(x){
+  
+  if(length(unique(x$play_design)) == 1){
+     grouped_PO_by_down <- x %>% # PO= pass only, as in only dropbacks in data
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,6,14,15)) %>%
+   summarise(down_pass_count = n(), # pass play count by down,
+             epa_per_pass = round(sum(epa)/down_pass_count, 2)) # epa/pass
+  
+  grouped_PO_play_down_counts <- x %>% # PO, so all plays are dropbacks
+   group_by(pick(3,7,6,14,15)) %>%
+   summarise(plays_by_down_PO = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_by_down_PO, 2), # epa/play
+          grouped_off_success_rate_PO = round((sum(success)/plays_by_down_PO),2), # success rate
+           motion_perc = round(sum(motion)/plays_by_down_PO,2), # motion rate
+                pa_perc = round(sum(play_action)/plays_by_down_PO,2)) # PA rate
+              
+  
+  grouped_by_downPO <- grouped_PO_play_down_counts %>% # PO, all plays are dropbacks
+    merge(grouped_PO_by_down, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_by_downPO <- grouped_by_downPO %>% 
+    filter(!is.na(.[[2]]))
+  
+  grouped_by_downPO <- grouped_by_downPO[c(1,5,4,2,3,11,7,12,8,9,10)]
+  
+  print(grouped_by_downPO)
+  }
+  else{
+  grouped_run_by_down <- x %>%
+   filter(play_design == "rush") %>% # run plays
+   group_by(pick(3,7,6,14,15)) %>%
+  summarise(down_run_count = n(), # run play count by down
+           epa_per_run = round(sum(epa)/down_run_count, 2)) # epa/run
+             
+          
+  grouped_pass_by_down <- x %>% 
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,6,14,15)) %>%
+   summarise(down_pass_count = n(), # pass play count by down,
+             epa_per_pass = round(sum(epa)/down_pass_count, 2)) # epa/pass
+  
+  grouped_play_down_counts <- x %>% 
+   group_by(pick(3,7,6,14,15)) %>%
+   summarise(plays_by_down = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_by_down, 2), # epa/play
+          grouped_off_success_rate = round((sum(success)/plays_by_down),2), # success rate
+           motion_perc = round(sum(motion)/plays_by_down,2), # motion rate
+                pa_perc = round(sum(play_action)/plays_by_down,2)) # PA rate
+              
+  
+  grouped_by_down1 <- grouped_play_down_counts %>% 
+    merge(grouped_run_by_down, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  grouped_by_down2 <- grouped_by_down1 %>% 
+    merge(grouped_pass_by_down, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_by_down2 <- grouped_by_down2[c(1,5,4,2,3,6,7,12,14,8,9,10)]
+  
+  print(grouped_by_down2)
+  }
+}
+
+# run function 3 on data
+OP_by_down <- lapply(off_personnels, usage_by_down)
+OF_by_down <- lapply(off_formations, usage_by_down)
+DP_by_down <- lapply(def_personnels, usage_by_down)
+Box_by_down <- lapply(box_defenders, usage_by_down)
+PR_by_down <- lapply(pass_rushers, usage_by_down)
+Cov_by_down <- lapply(coverages, usage_by_down)
+
+```
+
+
+
+```{r}
+#function 4 - def personnel, box defenders, pass rushers, coverage by off personnel
+defense_by_OP <- function(x, y, z){
+  off_pers_merged_all <- x %>% 
+    left_join(off_personnel_participation_all, by=c("nflverse_game_id","play_id","qtr","time","down","play_design","yards","epa","success", "motion", "play_action", "season_type", "season")) %>% select(-posteam) # add in off personnel on each play
+  off_pers_merged_reg <- y %>% 
+    left_join(off_personnel_participation_reg, by=c("nflverse_game_id","play_id","qtr","time","down","play_design","yards","epa","success", "motion", "play_action", "season_type", "season")) %>% select(-posteam) # add in off personnel on each play
+  off_pers_merged_post <- z %>% 
+    left_join(off_personnel_participation_post, by=c("nflverse_game_id","play_id","qtr","time","down","play_design","yards","epa","success", "motion", "play_action", "season_type", "season")) %>% select(-posteam) # add in off personnel on each play
+  
+  if(length(unique(x$play_design)) == 1){
+     grouped_PO_vs_OP_all <- off_pers_merged_all %>% # PO= pass only, as in only dropbacks in data
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(pass_vs_OP_PO = n(), # pass play count 
+             epa_per_pass = round(sum(epa)/pass_vs_OP_PO, 2)) # epa/pass
+  
+  grouped_PO_plays_vs_OP_all <- off_pers_merged_all %>% # PO, so all plays are dropbacks
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(plays_vs_OP_PO = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_vs_OP_PO, 2), # epa/play
+          grouped_off_success_rate_PO = round((sum(success)/plays_vs_OP_PO),2)) # success rate
+
+              
+  
+  grouped_vs_OP_PO_all <- grouped_PO_plays_vs_OP_all %>% # PO, all plays are dropbacks
+    merge(grouped_PO_vs_OP_all, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_vs_OP_PO_all <- grouped_vs_OP_PO_all %>% 
+    filter(!is.na(.[[2]]))
+  
+  grouped_vs_OP_PO_all <- grouped_vs_OP_PO_all[c(1,4,3,5,2,7,9,10,8)]
+  
+  }
+  else{
+  
+  grouped_run_vs_OP_all <- off_pers_merged_all %>%
+    filter(play_design == "rush") %>% # run plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(run_count_vs_OP_all = n(), # run play count
+             epa_per_run = round(sum(epa)/run_count_vs_OP_all, 2)) # epa/run
+             
+          
+  grouped_pass_vs_OP_all <- off_pers_merged_all %>% 
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(pass_count_vs_OP_all = n(), # pass play count
+             epa_per_pass = round(sum(epa)/pass_count_vs_OP_all, 2)) # epa/pass
+  
+  grouped_plays_vs_OP_all <- off_pers_merged_all %>% 
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(plays_vs_OP = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_vs_OP, 2), # epa/play
+          grouped_off_success_rate = round((sum(success)/plays_vs_OP),2)) # success rate
+
+  
+   grouped_vs_OP1_all <- grouped_plays_vs_OP_all %>% 
+    merge(grouped_run_vs_OP_all, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  grouped_vs_OP2_all <- grouped_vs_OP1_all %>% 
+    merge(grouped_pass_vs_OP_all, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_vs_OP2_all <- grouped_vs_OP2_all[c(1,4,3,5,2,6,7,10,12,8)]
+
+  }
+ if(length(unique(y$play_design)) == 1){
+     grouped_PO_vs_OP_reg <- off_pers_merged_reg %>% # PO= pass only, as in only dropbacks in data
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(pass_vs_OP_PO = n(), # pass play count by down,
+             epa_per_pass = round(sum(epa)/pass_vs_OP_PO, 2)) # epa/pass
+  
+  grouped_PO_plays_vs_OP_reg <- off_pers_merged_reg %>% # PO, so reg plays are dropbacks
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(plays_vs_OP_PO = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_vs_OP_PO, 2), # epa/play
+          grouped_off_success_rate_PO = round((sum(success)/plays_vs_OP_PO),2)) # success rate
+  
+  grouped_vs_OP_PO_reg <- grouped_PO_plays_vs_OP_reg %>% # PO, reg plays are dropbacks
+    merge(grouped_PO_vs_OP_reg, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_vs_OP_PO_reg <- grouped_vs_OP_PO_reg %>% 
+    filter(!is.na(.[[2]]))
+  
+  grouped_vs_OP_PO_reg <- grouped_vs_OP_PO_reg[c(1,4,3,5,2,7,9,10,8)]
+
+  }
+  else{
+  
+  grouped_run_vs_OP_reg <- off_pers_merged_reg %>%
+    filter(play_design == "rush") %>% # run plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(run_count_vs_OP_reg = n(), # run play count by dnd
+             epa_per_run = round(sum(epa)/run_count_vs_OP_reg, 2)) # epa/run
+             
+          
+  grouped_pass_vs_OP_reg <- off_pers_merged_reg %>% 
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(pass_count_vs_OP_reg = n(), # pass play count by
+             epa_per_pass = round(sum(epa)/pass_count_vs_OP_reg, 2)) # epa/pass
+  
+  grouped_plays_vs_OP_reg <- off_pers_merged_reg %>% 
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(plays_vs_OP = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_vs_OP, 2), # epa/play
+          grouped_off_success_rate = round((sum(success)/plays_vs_OP),2)) # success rate
+  
+   grouped_vs_OP1_reg <- grouped_plays_vs_OP_reg %>% 
+    merge(grouped_run_vs_OP_reg, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  grouped_vs_OP2_reg <- grouped_vs_OP1_reg %>% 
+    merge(grouped_pass_vs_OP_reg, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_vs_OP2_reg <- grouped_vs_OP2_reg[c(1,4,3,5,2,6,7,10,12,8)]
+
+  }
+ if(length(unique(z$play_design)) == 1){
+     grouped_PO_vs_OP_post <- off_pers_merged_post %>% # PO= pass only, as in only dropbacks in data
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(pass_vs_OP_PO = n(), # pass play count by down,
+             epa_per_pass = round(sum(epa)/pass_vs_OP_PO, 2)) # epa/pass
+  
+  grouped_PO_plays_vs_OP_post <- off_pers_merged_post %>% # PO, so post plays are dropbacks
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(plays_vs_OP_PO = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_vs_OP_PO, 2), # epa/play
+          grouped_off_success_rate_PO = round((sum(success)/plays_vs_OP_PO),2)) # success rate
+  
+  grouped_vs_OP_PO_post <- grouped_PO_plays_vs_OP_post %>% # PO, post plays are dropbacks
+    merge(grouped_PO_vs_OP_post, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_vs_OP_PO_post <- grouped_vs_OP_PO_post %>% 
+    filter(!is.na(.[[2]]))
+  
+  grouped_vs_OP_PO_post <- grouped_vs_OP_PO_post[c(1,4,3,5,2,7,9,10,8)]
+
+  }
+  else{
+  
+  grouped_run_vs_OP_post <- off_pers_merged_post %>%
+    filter(play_design == "rush") %>% # run plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(run_count_vs_OP_post = n(), # run play count by dnd
+             epa_per_run = round(sum(epa)/run_count_vs_OP_post, 2)) # epa/run
+             
+          
+  grouped_pass_vs_OP_post <- off_pers_merged_post %>% 
+    filter(play_design == "dropback") %>% # pass plays
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(pass_count_vs_OP_post = n(), # pass play count by 
+             epa_per_pass = round(sum(epa)/pass_count_vs_OP_post, 2)) # epa/pass
+  
+  grouped_plays_vs_OP_post <- off_pers_merged_post %>% 
+   group_by(pick(3,7,14,15,16)) %>%
+   summarise(plays_vs_OP = n(), # play counts
+             epa_per_play = round(sum(epa)/plays_vs_OP, 2), # epa/play
+          grouped_off_success_rate = round((sum(success)/plays_vs_OP),2)) # success rate
+  
+   grouped_vs_OP1_post <- grouped_plays_vs_OP_post %>% 
+    merge(grouped_run_vs_OP_post, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  grouped_vs_OP2_post <- grouped_vs_OP1_post %>% 
+    merge(grouped_pass_vs_OP_post, by.x=c(1,2,3,4,5), by.y=c(1,2,3,4,5))
+  
+  grouped_vs_OP2_post <- grouped_vs_OP2_post[c(1,4,3,5,2,6,7,10,12,8)]
+
+  }
+  if(length(unique(x$play_design)) ==1 & length(unique(y$play_design)) == 1& length(unique(z$play_design)) == 1){
+    return(list(all_participation = grouped_vs_OP_PO_all,
+                reg_participation = grouped_vs_OP_PO_reg,
+                post_participation = grouped_vs_OP_PO_post))
+  }
+  else{
+    return(list(all_participation = grouped_vs_OP2_all,
+                reg_participation = grouped_vs_OP2_reg,
+                post_participation = grouped_vs_OP2_post))
+  }
+}
+
+# run function 5 on data
+DP_vs_OP <- defense_by_OP(x=def_personnels$all_def_personnel_participation, 
+                          y=def_personnels$reg_def_personnel_participation, 
+                          z=def_personnels$post_def_personnel_participation)
+Box_vs_OP <- defense_by_OP(x=box_defenders$all_box_defenders_participation,
+                           y=box_defenders$reg_box_defenders_participation, 
+                           z=box_defenders$post_box_defenders_participation)
+PR_vs_OP <- defense_by_OP(x=pass_rushers$all_pass_rushers_participation,
+                          y=pass_rushers$reg_pass_rushers_participation, 
+                          z=pass_rushers$post_pass_rushers_participation)
+Cov_vs_OP <- defense_by_OP(x=coverages$all_coverage_participation,
+                           y=coverages$reg_coverage_participation,
+                           z=coverages$post_coverage_participation)
+
+```
+```{r}
+# function 5 - rankings by off personnel, formation
+off_ranker <- function(a){
+        ranked_data <- a %>% group_by(pick(2,4)) %>% 
+          mutate(epa_play_rank = rank(-epa_per_play, ties.method = "min"),
+                 epa_pass_rank = rank(-epa_per_pass, ties.method = "min"),
+                 epa_run_rank = rank(-epa_per_run, ties.method = "min"),
+                 suc_rate_rank = rank(-grouped_off_success_rate, ties.method = "min"),
+                 motion_rank = rank(-motion_perc, ties.method = "min"),
+                 pa_rank = rank(-pa_perc, ties.method = "min"))
+        
+        ranked_data2 <- ranked_data[c(1,2,3,4,5,6,12,7,14,8,13,9,15,10,16,11,17)]
+        print(ranked_data2)
+}
+
+# apply function to count data
+OP_counts_ranked <- lapply(OP_counts, off_ranker)
+OF_counts_ranked <- lapply(OF_counts, off_ranker)
+```
+
+```{r}
+# function 6 - rankings by def personnel, etc
+def_ranker <- function(a){
+  if(ncol(a) < 11){
+    ranked_data_PO <- a %>% group_by(pick(2,4)) %>% 
+          mutate(epa_play_rank = rank(epa_per_play, ties.method = "min"),
+                 epa_pass_rank = rank(epa_per_pass, ties.method = "min"),
+                 suc_rate_rank = rank(grouped_off_success_rate_PO, ties.method = "min")) %>% 
+      select(-motion_perc, -pa_perc)
+        
+        ranked_data_PO_2 <- ranked_data_PO[c(1,2,3,4,5,6,9,7,10,8,11)]
+        print(ranked_data_PO_2)
+    
+  }
+  else {
+  ranked_data <- a %>% group_by(pick(2,4)) %>% 
+          mutate(epa_play_rank = rank(epa_per_play, ties.method = "min"),
+                 epa_pass_rank = rank(epa_per_pass, ties.method = "min"),
+                 epa_run_rank = rank(epa_per_run, ties.method = "min"),
+                 suc_rate_rank = rank(grouped_off_success_rate, ties.method = "min")) %>% 
+      select(-motion_perc, -pa_perc)
+        
+        ranked_data2 <- ranked_data[c(1,2,3,4,5,6,10,7,12,8,11,9,13)]
+        print(ranked_data2)
+  }
+}
+
+# apply function to count data
+DP_counts_ranked <- lapply(DP_counts, def_ranker)
+Box_counts_ranked <- lapply(Box_counts, def_ranker)
+PR_counts_ranked <- lapply(PR_counts, def_ranker)
+Cov_counts_ranked <- lapply(Cov_counts, def_ranker)
+```
+
+```{r}
+# calculate player counts, all season types
+player_play_counts_all <- player_participation %>% 
+  group_by(team, display_name, position, season) %>% summarise(all_play_count = n()) # total play counts for all players
+
+## get offensive player play counts by personnel and season type
+OP_player_play_count_all <- player_participation %>% 
+  filter(Off.Def == "Offense") %>% 
+  filter(position %in% c("RB", "FB", "WR", "TE")) %>% 
+  group_by(team, display_name, position, offense_personnel, season) %>% 
+  summarise(off_personnel_play_count = n()) %>% 
+  pivot_wider(names_from = offense_personnel, values_from = off_personnel_play_count, values_fill = 0) %>%  # pivot so there's 1 row for each player
+  left_join(player_play_counts_all, by=c("team", "display_name", "position", "season")) %>%  # join in total play count for comparison 
+  mutate(season_type = "REG+POST") # season_type classification
+  
+
+OP_player_play_count_all <- rename(OP_player_play_count_all, total= all_play_count) # rename all season types play count
+OP_player_play_count_all <- OP_player_play_count_all[order(OP_player_play_count_all$position),] # order by position
+
+# get defensive player play counts by personnel, all season types
+DP_player_play_count_all <- player_participation %>% 
+  filter(Off.Def == "Defense") %>% 
+  group_by(team, display_name, position, defense_personnel, season) %>% 
+  summarise(def_personnel_play_count = n())  %>% 
+  pivot_wider(names_from = defense_personnel, values_from = def_personnel_play_count, values_fill = 0) %>%  # pivot so there's 1 row for each player
+left_join(player_play_counts_all, by=c("team", "display_name", "position", "season"))  %>%  # join in total play count for comparison 
+  mutate(season_type = "REG+POST") # season_type classification
+
+DP_player_play_count_all <- rename(DP_player_play_count_all, total= all_play_count) # rename all season types play count
+DP_player_play_count_all <- DP_player_play_count_all[order(DP_player_play_count_all$position),] # order by position
+
+# calculate player counts, REG season types
+player_play_counts_reg <- player_participation %>% 
+  filter(season_type == "REG") %>% 
+  group_by(team, display_name, position, season) %>% summarise(reg_play_count = n()) # total play counts for all players in reg season
+
+# get offensive player play counts by personnel, REG season types
+OP_player_play_count_reg <- player_participation %>% 
+  filter(Off.Def == "Offense" & season_type == "REG") %>% 
+  filter(position %in% c("RB", "FB", "WR", "TE")) %>% 
+  group_by(team, display_name, position, offense_personnel, season) %>% 
+  summarise(off_personnel_play_count = n()) %>% 
+  pivot_wider(names_from = offense_personnel, values_from = off_personnel_play_count, values_fill = 0) %>%  # pivot so there's 1 row for each player
+  left_join(player_play_counts_reg, by=c("team", "display_name", "position", "season"))  %>%  # join in total play count for comparison 
+  mutate(season_type = "REG") # season_type classification
+
+OP_player_play_count_reg <- rename(OP_player_play_count_reg, total= reg_play_count) # rename reg season type play count
+OP_player_play_count_reg <- OP_player_play_count_reg[order(OP_player_play_count_reg$position),] # order by position
+
+# get defensive player play counts by personnel, REG season type
+DP_player_play_count_reg <- player_participation %>% 
+  filter(Off.Def == "Defense" & season_type == "REG") %>% 
+  group_by(team, display_name, position, defense_personnel, season) %>% 
+  summarise(def_personnel_play_count = n())  %>% 
+  pivot_wider(names_from = defense_personnel, values_from = def_personnel_play_count, values_fill = 0) %>%  # pivot so there's 1 row for each player
+left_join(player_play_counts_reg, by=c("team", "display_name", "position", "season"))  %>%  # join in total play count for comparison 
+  mutate(season_type = "REG") # season_type classification
+
+DP_player_play_count_reg <- rename(DP_player_play_count_reg, total= reg_play_count) # rename reg season type play count
+DP_player_play_count_reg <- DP_player_play_count_reg[order(DP_player_play_count_reg$position),] # order by position
+  
+# calculate player counts, POST season types
+player_play_counts_post <- player_participation %>% 
+  filter(season_type == "POST") %>% 
+  group_by(team, display_name, position, season) %>% summarise(post_play_count = n()) # total play counts for all players in post season
+
+# get offensive player play counts by personnel, POST season types
+OP_player_play_count_post <- player_participation %>% 
+  filter(Off.Def == "Offense" & season_type == "POST") %>% 
+  filter(position %in% c("RB", "FB", "WR", "TE")) %>% 
+  group_by(team, display_name, position, offense_personnel, season) %>% 
+  summarise(off_personnel_play_count = n()) %>% 
+  pivot_wider(names_from = offense_personnel, values_from = off_personnel_play_count, values_fill = 0) %>%  # pivot so there's 1 row for each player
+  left_join(player_play_counts_post, by=c("team", "display_name", "position", "season"))  %>%  # join in total play count for comparison 
+  mutate(season_type = "POST") # season_type classification
+
+OP_player_play_count_post <- rename(OP_player_play_count_post, total= post_play_count) # rename post season type play count
+OP_player_play_count_post <- OP_player_play_count_post[order(OP_player_play_count_post$position),] # order by position
+
+# get defensive player play counts by personnel, POST season type
+DP_player_play_count_post <- player_participation %>% 
+  filter(Off.Def == "Defense" & season_type == "POST") %>% 
+  group_by(team, display_name, position, defense_personnel, season) %>% 
+  summarise(def_personnel_play_count = n())  %>% 
+  pivot_wider(names_from = defense_personnel, values_from = def_personnel_play_count, values_fill = 0) %>%  # pivot so there's 1 row for each player
+left_join(player_play_counts_post, by=c("team", "display_name", "position", "season"))  %>%  # join in total play count for comparison 
+  mutate(season_type = "POST") # season_type classification
+
+DP_player_play_count_post <- rename(DP_player_play_count_post, total= post_play_count) # rename post season type play count
+DP_player_play_count_post <- DP_player_play_count_post[order(DP_player_play_count_post$position),] # order by position
+
+# bind OP counts together
+OP_player_play_count_bind <- rbind(OP_player_play_count_all,
+                                  OP_player_play_count_reg,
+                                  OP_player_play_count_post)
+
+# bind DP counts together
+DP_player_play_count_bind <- rbind(DP_player_play_count_all,
+                                  DP_player_play_count_reg,
+                                  DP_player_play_count_post)
+
+```
+
+```{r}
+### bind list elements together for concenvience when coding app
+
+## Ranked Counts
+OP_counts_bind <- rbind(OP_counts_ranked$all_off_personnel_participation,
+                        OP_counts_ranked$reg_off_personnel_participation,
+                        OP_counts_ranked$post_off_personnel_participation)
+OF_counts_bind <- rbind(OF_counts_ranked$all_off_formation_participation,
+                        OF_counts_ranked$reg_off_formation_participation,
+                        OF_counts_ranked$post_off_formation_participation)
+DP_counts_bind <- rbind(DP_counts_ranked$all_def_personnel_participation,
+                        DP_counts_ranked$reg_def_personnel_participation,
+                        DP_counts_ranked$post_def_personnel_participation)
+Box_counts_bind <- rbind(Box_counts_ranked$all_box_defenders_participation,
+                         Box_counts_ranked$reg_box_defenders_participation,
+                         Box_counts_ranked$post_box_defenders_participation)
+PR_counts_bind <- rbind(PR_counts_ranked$all_pass_rushers_participation,
+                        PR_counts_ranked$reg_pass_rushers_participation,
+                        PR_counts_ranked$post_pass_rushers_participation)
+Cov_counts_bind <- rbind(Cov_counts_ranked$all_coverage_participation,
+                         Cov_counts_ranked$reg_coverage_participation,
+                         Cov_counts_ranked$post_coverage_participation)
+
+## Playcalls
+OP_playcalls_bind <- rbind(OP_playcalls$all_off_personnel_participation,
+                        OP_playcalls$reg_off_personnel_participation,
+                        OP_playcalls$post_off_personnel_participation)
+OF_playcalls_bind <- rbind(OF_playcalls$all_off_formation_participation,
+                        OF_playcalls$reg_off_formation_participation,
+                        OF_playcalls$post_off_formation_participation)
+
+## by down
+OP_by_down_bind <- rbind(OP_by_down$all_off_personnel_participation,
+                        OP_by_down$reg_off_personnel_participation,
+                        OP_by_down$post_off_personnel_participation)
+OF_by_down_bind <- rbind(OF_by_down$all_off_formation_participation,
+                        OF_by_down$reg_off_formation_participation,
+                        OF_by_down$post_off_formation_participation)
+DP_by_down_bind <- rbind(DP_by_down$all_def_personnel_participation,
+                        DP_by_down$reg_def_personnel_participation,
+                        DP_by_down$post_def_personnel_participation)
+Box_by_down_bind <- rbind(Box_by_down$all_box_defenders_participation,
+                         Box_by_down$reg_box_defenders_participation,
+                         Box_by_down$post_box_defenders_participation)
+PR_by_down_bind <- rbind(PR_by_down$all_pass_rushers_participation,
+                        PR_by_down$reg_pass_rushers_participation,
+                        PR_by_down$post_pass_rushers_participation)
+Cov_by_down_bind <- rbind(Cov_by_down$all_coverage_participation,
+                         Cov_by_down$reg_coverage_participation,
+                         Cov_by_down$post_coverage_participation)
+
+## vs OP
+DP_vs_OP_bind <- rbind(DP_vs_OP$all_participation,
+                        DP_vs_OP$reg_participation,
+                        DP_vs_OP$post_participation)
+Box_vs_OP_bind <- rbind(Box_vs_OP$all_participation,
+                         Box_vs_OP$reg_participation,
+                         Box_vs_OP$post_participation)
+PR_vs_OP_bind <- rbind(PR_vs_OP$all_participation,
+                        PR_vs_OP$reg_participation,
+                        PR_vs_OP$post_participation)
+Cov_vs_OP_bind <- rbind(Cov_vs_OP$all_participation,
+                         Cov_vs_OP$reg_participation,
+                         Cov_vs_OP$post_participation)
+
+```
+
+
+```{r}
+## put data for app in lists, save as RData files
+
+# counts by team
+save(OP_counts_bind, file="OPcounts_22.24.RData")
+save(OF_counts_bind, file="OFcounts_22.24.RData")
+save(DP_counts_bind, file="DPcounts_22.24.RData")
+save(Box_counts_bind, file="BoxCounts_22.24.RData")
+save(PR_counts_bind, file="PRCounts_22.24.RData")
+save(Cov_counts_bind, file="CovCounts_22.24.RData")
+
+# run/pass splits by team
+save(OP_playcalls_bind, file="OPPlaycalls_22.24.RData")
+save(OF_playcalls_bind, file="OFPlaycalls_22.24.RData")
+
+# counts by team, down
+save(OP_by_down_bind, file="OPbyDown_22.24.RData")
+save(OF_by_down_bind, file="OFbyDown_22.24.RData")
+save(DP_by_down_bind, file="DPbyDown_22.24.RData")
+save(Box_by_down_bind, file="BoxbyDown_22.24.RData")
+save(PR_by_down_bind, file="PRbyDown_22.24.RData") 
+save(Cov_by_down_bind, file="CovbyDown_22.24.RData")
+
+# counts by team, vs OP
+save(DP_vs_OP_bind, file="DPvsOP_22.24.RData") 
+save(Box_vs_OP_bind, file="BoxvsOP_22.24.RData")
+save(PR_vs_OP_bind, file="PRvsOP_22.24.RData") 
+save(Cov_vs_OP_bind, file="CovvsOP_22.24.RData")
+
+# counts by player and season type, off/def personnel
+save(OP_player_play_count_bind, file="OP_player_count_22.24.RData")
+save(DP_player_play_count_bind, file="DP_player_count_22.24.RData")
+
+
+
+
+
+
+```
+
+
+
+
+
+
